@@ -17,41 +17,43 @@
  *******************************************************************************/
 package org.mitre.discovery.util;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.google.common.base.Strings;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 import org.springframework.web.util.UriComponents;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import com.google.common.base.Strings;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Provides utility methods for normalizing and parsing URIs for use with Webfinger Discovery.
  *
  * @author wkim
  */
+@Slf4j
 public class WebfingerURLNormalizer {
 
-	private static final Logger logger = LoggerFactory.getLogger(WebfingerURLNormalizer.class);
+	public static final String HTTPS = "https";
+	public static final String ACCT = "acct";
+	public static final String HTTP = "http";
+	public static final String MAILTO = "mailto";
+	public static final String TEL = "tel";
+	public static final String DEVICE = "device";
 
 	// pattern used to parse user input; we can't use the built-in java URI parser
 	private static final Pattern pattern = Pattern.compile("^" +
-			"((https|acct|http|mailto|tel|device):(//)?)?" + // scheme
+			"((" + HTTPS + '|' + HTTP + '|' + ACCT + '|' + MAILTO + '|' + TEL + '|' + DEVICE + "):(//)?)?" + // scheme
 			"(" +
 			"(([^@]+)@)?" + // userinfo
-			"(([^\\?#:/]+)" + // host
+			"(([^?#:/]+)" + // host
 			"(:(\\d*))?)" + // port
 			")" +
-			"([^\\?#]+)?" + // path
+			"([^?#]+)?" + // path
 			"(\\?([^#]+))?" + // query
 			"(#(.*))?" +  // fragment
 			"$"
 			);
-
-	private WebfingerURLNormalizer() { }
 
 	/**
 	 * Normalize the resource string as per OIDC Discovery.
@@ -63,7 +65,7 @@ public class WebfingerURLNormalizer {
 		// NOTE: we can't use the Java built-in URI class because it doesn't split the parts appropriately
 
 		if (StringUtils.isEmpty(identifier)) {
-			logger.warn("Can't normalize null or empty URI: " + identifier);
+			log.warn("Can't normalize null or empty URI: " + identifier);
 			return null;
 		} else {
 			UriComponentsBuilder builder = UriComponentsBuilder.newInstance();
@@ -81,66 +83,57 @@ public class WebfingerURLNormalizer {
 				builder.query(m.group(13));
 				builder.fragment(m.group(15)); // we throw away the hash, but this is the group it would be if we kept it
 			} else {
-				logger.warn("Parser couldn't match input: {}", identifier);
+				log.warn("Parser couldn't match input: '{}'", identifier);
 				return null;
 			}
 
 			UriComponents n = builder.build();
 
-			if (Strings.isNullOrEmpty(n.getScheme())) {
-				if (!Strings.isNullOrEmpty(n.getUserInfo())
-						&& Strings.isNullOrEmpty(n.getPath())
-						&& Strings.isNullOrEmpty(n.getQuery())
-						&& n.getPort() < 0) {
-
-					// scheme empty, userinfo is not empty, path/query/port are empty
-					// set to "acct" (rule 2)
-					builder.scheme("acct");
+			if (!StringUtils.hasText(n.getScheme())) {
+				if (StringUtils.hasText(n.getUserInfo()) && !StringUtils.hasText(n.getPath())
+						&& !StringUtils.hasText(n.getQuery()) && n.getPort() < 0)
+				{
+					// scheme empty, userinfo is not empty, path/query/port are empty, set to "acct" (rule 2)
+					builder.scheme(ACCT);
 				} else {
-					// scheme is empty, but rule 2 doesn't apply
-					// set scheme to "https" (rule 3)
-					builder.scheme("https");
+					// scheme is empty, but rule 2 doesn't apply, set scheme to "https" (rule 3)
+					builder.scheme(HTTPS);
 				}
 			}
-
 			// fragment must be stripped (rule 4)
 			builder.fragment(null);
-
 			return builder.build();
 		}
 	}
 
 	public static String serializeURL(UriComponents uri) {
+		if (uri == null) {
+			return null;
+		}
+
 		String scheme = uri.getScheme();
-		if (scheme != null &&
-				(scheme.equals("acct") || scheme.equals("mailto") || scheme.equals("tel") || scheme.equals("device"))) {
+		if (StringUtils.hasText(scheme) && isSchemeNonHttp(scheme)) {
 			// serializer copied from HierarchicalUriComponents but with "//" removed
 			StringBuilder uriBuilder = new StringBuilder();
 
-			uriBuilder.append(scheme);
-			uriBuilder.append(':');
+			uriBuilder.append(scheme).append(':');
 
 			String userInfo = uri.getUserInfo();
 			String host = uri.getHost();
-			if (userInfo != null || host != null) {
-				if (userInfo != null) {
-					uriBuilder.append(userInfo);
-					uriBuilder.append('@');
-				}
+			if (StringUtils.hasText(userInfo)) {
+				uriBuilder.append(userInfo).append('@');
+			}
+			if (StringUtils.hasText(host)) {
+				uriBuilder.append(host);
+			}
 
-				if (host != null) {
-					uriBuilder.append(host);
-				}
-
-				int port = uri.getPort();
-				if (port != -1) {
-					uriBuilder.append(':');
-					uriBuilder.append(port);
-				}
+			int port = uri.getPort();
+			if (port > -1) {
+				uriBuilder.append(':').append(port);
 			}
 
 			String path = uri.getPath();
-			if (StringUtils.hasLength(path)) {
+			if (StringUtils.hasText(path)) {
 				if (uriBuilder.length() != 0 && path.charAt(0) != '/') {
 					uriBuilder.append('/');
 				}
@@ -148,21 +141,23 @@ public class WebfingerURLNormalizer {
 			}
 
 			String query = uri.getQuery();
-			if (query != null) {
-				uriBuilder.append('?');
-				uriBuilder.append(query);
+			if (StringUtils.hasText(query)) {
+				uriBuilder.append('?').append(query);
 			}
 
 			String fragment = uri.getFragment();
-			if (fragment != null) {
-				uriBuilder.append('#');
-				uriBuilder.append(fragment);
+			if (StringUtils.hasText(fragment)) {
+				uriBuilder.append('#').append(fragment);
 			}
 
 			return uriBuilder.toString();
 		} else {
 			return uri.toUriString();
 		}
+	}
+
+	private static boolean isSchemeNonHttp(String scheme) {
+		return DEVICE.equals(scheme) || ACCT.equals(scheme) || TEL.equals(scheme) || MAILTO.equals(scheme);
 	}
 
 }

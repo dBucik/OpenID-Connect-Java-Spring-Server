@@ -17,11 +17,13 @@
  *******************************************************************************/
 package org.mitre.discovery.web;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
-
+import com.google.common.base.Strings;
+import com.google.common.collect.Collections2;
+import com.google.common.collect.Lists;
+import com.nimbusds.jose.Algorithm;
+import com.nimbusds.jose.JWSAlgorithm;
+import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.mitre.discovery.util.WebfingerURLNormalizer;
 import org.mitre.jwt.encryption.service.JWTEncryptionAndDecryptionService;
 import org.mitre.jwt.signer.service.JWTSigningAndValidationService;
@@ -39,24 +41,24 @@ import org.mitre.openid.connect.web.DynamicClientRegistrationEndpoint;
 import org.mitre.openid.connect.web.EndSessionEndpoint;
 import org.mitre.openid.connect.web.JWKSetPublishingEndpoint;
 import org.mitre.openid.connect.web.UserInfoEndpoint;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.util.UriComponents;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import com.google.common.base.Function;
-import com.google.common.base.Strings;
-import com.google.common.collect.Collections2;
-import com.google.common.collect.Lists;
-import com.nimbusds.jose.Algorithm;
-import com.nimbusds.jose.JWSAlgorithm;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
+
+import static org.mitre.discovery.util.WebfingerURLNormalizer.ACCT;
 
 /**
  *
@@ -65,15 +67,14 @@ import com.nimbusds.jose.JWSAlgorithm;
  * @author jricher
  *
  */
+@Slf4j
 @Controller
 public class DiscoveryEndpoint {
-
-	private static final Logger logger = LoggerFactory.getLogger(DiscoveryEndpoint.class);
 
 	public static final String WELL_KNOWN_URL = ".well-known";
 	public static final String OPENID_CONFIGURATION_URL = WELL_KNOWN_URL + "/openid-configuration";
 	public static final String WEBFINGER_URL = WELL_KNOWN_URL + "/webfinger";
-	private static final String ISSUER_STRING = "http://openid.net/specs/connect/1.0/issuer";
+	public static final String ISSUER_STRING = "http://openid.net/specs/connect/1.0/issuer";
 
 	private final ConfigurationPropertiesBean config;
 	private final SystemScopeService scopeService;
@@ -82,12 +83,15 @@ public class DiscoveryEndpoint {
 	private final UserInfoService userService;
 
 	// used to map JWA algorithms objects to strings
-	private final Function<Algorithm, String> toAlgorithmName = alg -> alg == null ? null : alg.getName();
+	private final Function<Algorithm, @Nullable String> toAlgorithmName = alg -> alg == null ? null : alg.getName();
 
 	@Autowired
-	public DiscoveryEndpoint(UserInfoService userService, ConfigurationPropertiesBean config,
-							 SystemScopeService scopeService, JWTSigningAndValidationService signService,
-							 JWTEncryptionAndDecryptionService encService) {
+	public DiscoveryEndpoint(UserInfoService userService,
+							 ConfigurationPropertiesBean config,
+							 SystemScopeService scopeService,
+							 JWTSigningAndValidationService signService,
+							 JWTEncryptionAndDecryptionService encService)
+	{
 		this.userService = userService;
 		this.config = config;
 		this.scopeService = scopeService;
@@ -98,33 +102,34 @@ public class DiscoveryEndpoint {
 	@RequestMapping(value = '/' + WEBFINGER_URL, produces = MediaType.APPLICATION_JSON_VALUE)
 	public String webfinger(@RequestParam("resource") String resource,
 							@RequestParam(value = "rel", required = false) String rel,
-							Model model) {
-		if (!Strings.isNullOrEmpty(rel) && !rel.equals(ISSUER_STRING)) {
-			logger.warn("Responding to webfinger request for non-OIDC relation: {}", rel);
+							Model model)
+	{
+		if (StringUtils.hasText(rel) && !rel.equals(ISSUER_STRING)) {
+			log.warn("Responding to webfinger request for non-OIDC relation: '{}'", rel);
 		}
 
 		if (!resource.equals(config.getIssuer())) {
 			// it's not the issuer directly, need to check other methods
 			UriComponents resourceUri = WebfingerURLNormalizer.normalizeResource(resource);
-			if (resourceUri != null
-					&& resourceUri.getScheme() != null
-					&& resourceUri.getScheme().equals("acct")) {
+			if (resourceUri != null && ACCT.equals(resourceUri.getScheme())) {
 				UserInfo user = extractUser(resourceUri);
 				if (user == null) {
-					logger.info("User not found: {}", resource);
+					log.info("User not found: '{}'", resource);
 					model.addAttribute(HttpCodeView.CODE, HttpStatus.NOT_FOUND);
 					return HttpCodeView.VIEWNAME;
 				}
 
 				UriComponents issuerComponents = UriComponentsBuilder.fromHttpUrl(config.getIssuer()).build();
-				if (!Strings.nullToEmpty(issuerComponents.getHost())
-					.equals(Strings.nullToEmpty(resourceUri.getHost()))) {
-					logger.info("Host mismatch, expected " + issuerComponents.getHost() + " got " + resourceUri.getHost());
+
+				String issuerHost = StringUtils.hasText(issuerComponents.getHost()) ? issuerComponents.getHost() : "";
+				String resourceHost = StringUtils.hasText(resourceUri.getHost()) ? resourceUri.getHost() : "";
+				if (!issuerHost.equals(resourceHost)) {
+					log.info("Host mismatch, expected '{}', got '{}'", issuerHost, resourceHost);
 					model.addAttribute(HttpCodeView.CODE, HttpStatus.NOT_FOUND);
 					return HttpCodeView.VIEWNAME;
 				}
 			} else {
-				logger.info("Unknown URI format: " + resource);
+				log.info("Unknown URI format: '{}'", resource);
 				model.addAttribute(HttpCodeView.CODE, HttpStatus.NOT_FOUND);
 				return HttpCodeView.VIEWNAME;
 			}
@@ -134,14 +139,6 @@ public class DiscoveryEndpoint {
 		model.addAttribute("issuer", config.getIssuer());
 
 		return "webfingerView";
-	}
-
-	private UserInfo extractUser(UriComponents resourceUri) {
-		UserInfo user = userService.getByEmailAddress(resourceUri.getUserInfo() + "@" + resourceUri.getHost());
-		if (user == null) {
-			user = userService.getByUsername(resourceUri.getUserInfo()); // first part is the username
-		}
-		return user;
 	}
 
 	@RequestMapping("/" + OPENID_CONFIGURATION_URL)
@@ -269,7 +266,7 @@ public class DiscoveryEndpoint {
 		String baseUrl = config.getIssuer();
 
 		if (!baseUrl.endsWith("/")) {
-			logger.debug("Configured issuer doesn't end in /, adding for discovery: {}", baseUrl);
+			log.debug("Configured issuer doesn't end in /, adding for discovery: {}", baseUrl);
 			baseUrl = baseUrl.concat("/");
 		}
 
@@ -300,17 +297,17 @@ public class DiscoveryEndpoint {
 		m.put("grant_types_supported", grantTypes);
 		//acr_values_supported
 		m.put("subject_types_supported", Lists.newArrayList("public", "pairwise"));
-		m.put("userinfo_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgs, toAlgorithmName));
-		m.put("userinfo_encryption_alg_values_supported", Collections2.transform(encService.getAllEncryptionAlgsSupported(), toAlgorithmName));
-		m.put("userinfo_encryption_enc_values_supported", Collections2.transform(encService.getAllEncryptionEncsSupported(), toAlgorithmName));
-		m.put("id_token_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgsWithNone, toAlgorithmName));
-		m.put("id_token_encryption_alg_values_supported", Collections2.transform(encService.getAllEncryptionAlgsSupported(), toAlgorithmName));
-		m.put("id_token_encryption_enc_values_supported", Collections2.transform(encService.getAllEncryptionEncsSupported(), toAlgorithmName));
-		m.put("request_object_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgs, toAlgorithmName));
-		m.put("request_object_encryption_alg_values_supported", Collections2.transform(encService.getAllEncryptionAlgsSupported(), toAlgorithmName));
-		m.put("request_object_encryption_enc_values_supported", Collections2.transform(encService.getAllEncryptionEncsSupported(), toAlgorithmName));
+		m.put("userinfo_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgs, toAlgorithmName::apply));
+		m.put("userinfo_encryption_alg_values_supported", Collections2.transform(encService.getAllEncryptionAlgsSupported(), toAlgorithmName::apply));
+		m.put("userinfo_encryption_enc_values_supported", Collections2.transform(encService.getAllEncryptionEncsSupported(), toAlgorithmName::apply));
+		m.put("id_token_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgsWithNone, toAlgorithmName::apply));
+		m.put("id_token_encryption_alg_values_supported", Collections2.transform(encService.getAllEncryptionAlgsSupported(), toAlgorithmName::apply));
+		m.put("id_token_encryption_enc_values_supported", Collections2.transform(encService.getAllEncryptionEncsSupported(), toAlgorithmName::apply));
+		m.put("request_object_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgs, toAlgorithmName::apply));
+		m.put("request_object_encryption_alg_values_supported", Collections2.transform(encService.getAllEncryptionAlgsSupported(), toAlgorithmName::apply));
+		m.put("request_object_encryption_enc_values_supported", Collections2.transform(encService.getAllEncryptionEncsSupported(), toAlgorithmName::apply));
 		m.put("token_endpoint_auth_methods_supported", Lists.newArrayList("client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt", "none"));
-		m.put("token_endpoint_auth_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgs, toAlgorithmName));
+		m.put("token_endpoint_auth_signing_alg_values_supported", Collections2.transform(clientSymmetricAndAsymmetricSigningAlgs, toAlgorithmName::apply));
 		//display_types_supported
 		m.put("claim_types_supported", Lists.newArrayList("normal" /*, "aggregated", "distributed"*/));
 		m.put("claims_supported", Lists.newArrayList(
@@ -355,6 +352,27 @@ public class DiscoveryEndpoint {
 		model.addAttribute(JsonEntityView.ENTITY, m);
 
 		return JsonEntityView.VIEWNAME;
+	}
+
+	private UserInfo extractUser(UriComponents resourceUri) {
+		if (resourceUri == null || !StringUtils.hasText(resourceUri.getUserInfo())) {
+			log.debug("No user information to search with, return null");
+			return null;
+		}
+
+		UserInfo user = null;
+		try {
+			if (StringUtils.hasText(resourceUri.getHost())) {
+				user = userService.getByEmailAddress(resourceUri.getUserInfo() + "@" + resourceUri.getHost());
+			}
+		} catch (UnsupportedOperationException e) {
+			log.info("Searching for user by email is not supported");
+		}
+		if (user != null) {
+			return user;
+		} else {
+			return userService.getByUsername(resourceUri.getUserInfo()); // first part is the username
+		}
 	}
 
 }

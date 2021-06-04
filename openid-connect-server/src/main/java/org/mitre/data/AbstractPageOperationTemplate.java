@@ -15,12 +15,13 @@
  *******************************************************************************/
 package org.mitre.data;
 
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Abstract class for performing an operation on a potentially large
@@ -29,9 +30,10 @@ import org.slf4j.LoggerFactory;
  * @param <T>  the type parameter
  * @author Colm Smyth.
  */
+@Getter
+@Setter
+@Slf4j
 public abstract class AbstractPageOperationTemplate<T> {
-
-	private static final Logger logger = LoggerFactory.getLogger(AbstractPageOperationTemplate.class);
 
 	private static final int DEFAULT_MAX_PAGES = 1000;
 	private static final long DEFAULT_MAX_TIME_MILLIS = 600000L; //10 Minutes
@@ -44,41 +46,10 @@ public abstract class AbstractPageOperationTemplate<T> {
 	public AbstractPageOperationTemplate(String operationName){
 		this(DEFAULT_MAX_PAGES, DEFAULT_MAX_TIME_MILLIS, operationName);
 	}
-	public AbstractPageOperationTemplate(int maxPages, long maxTime, String operationName){
+
+	public AbstractPageOperationTemplate(int maxPages, long maxTime, String operationName) {
 		this.maxPages = maxPages;
 		this.maxTime = maxTime;
-		this.operationName = operationName;
-	}
-
-	public int getMaxPages() {
-		return maxPages;
-	}
-
-	public void setMaxPages(int maxPages) {
-		this.maxPages = maxPages;
-	}
-
-	public long getMaxTime() {
-		return maxTime;
-	}
-
-	public void setMaxTime(long maxTime) {
-		this.maxTime = maxTime;
-	}
-
-	public boolean isSwallowExceptions() {
-		return swallowExceptions;
-	}
-
-	public void setSwallowExceptions(boolean swallowExceptions) {
-		this.swallowExceptions = swallowExceptions;
-	}
-
-	public String getOperationName() {
-		return operationName;
-	}
-
-	public void setOperationName(String operationName) {
 		this.operationName = operationName;
 	}
 
@@ -91,7 +62,8 @@ public abstract class AbstractPageOperationTemplate<T> {
 	 * swallowException (default true) field is set true.
 	 */
 	public void execute(){
-		logger.debug("[{}] Starting execution of paged operation. max time: {}, max pages: {}", getOperationName(), maxTime, maxPages);
+		log.debug("[{}] Starting execution of paged operation. Max time: '{}', Max pages: '{}'",
+			getOperationName(), maxTime, maxPages);
 
 		long startTime = System.currentTimeMillis();
 		long executionTime = 0;
@@ -115,9 +87,9 @@ public abstract class AbstractPageOperationTemplate<T> {
 					if(swallowExceptions){
 						exceptionsSwallowedCount++;
 						exceptionsSwallowedClasses.add(e.getClass().getName());
-						logger.debug("Swallowing exception " + e.getMessage(), e);
+						log.debug("Swallowing exception: '{}'", e.getMessage(), e);
 					} else {
-						logger.debug("Rethrowing exception " + e.getMessage());
+						log.debug("Rethrowing exception: '{}'", e.getMessage());
 						throw e;
 					}
 				}
@@ -147,13 +119,17 @@ public abstract class AbstractPageOperationTemplate<T> {
 	/**
 	 * Method responsible for final report of progress.
 	 */
-	protected void finalReport(int operationsCompleted, int exceptionsSwallowedCount, Set<String> exceptionsSwallowedClasses) {
+	protected void finalReport(int operationsCompleted, int exceptionsSwallowedCount,
+							   Set<String> exceptionsSwallowedClasses)
+	{
 		if (operationsCompleted > 0 || exceptionsSwallowedCount > 0) {
-			logger.info("[{}] Paged operation run: completed {}; swallowed {} exceptions",
+			log.info("[{}] Paged operation run: completed '{}'; swallowed '{}' exceptions",
 				getOperationName(), operationsCompleted, exceptionsSwallowedCount);
 		}
 		for(String className:  exceptionsSwallowedClasses) {
-			logger.warn("[{}] Paged operation swallowed at least one exception of type {}", getOperationName(), className);
+			log.warn("[{}] Paged operation swallowed at least one exception of type '{}'",
+				getOperationName(), className);
 		}
 	}
+
 }
